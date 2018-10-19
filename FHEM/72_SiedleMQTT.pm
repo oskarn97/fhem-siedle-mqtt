@@ -214,7 +214,7 @@ sub onmessage($$$) {
 sub connectionTimeout {
     my ($hash) = @_;
     return if(time() - $hash->{lastHeartbeat} < 70);
-    readingsSingleUpdate($hash->{NAME}, 'state', 'offline', 1);
+    readingsSingleUpdate($hash, 'state', 'offline', 1);
 }
 
 1;
