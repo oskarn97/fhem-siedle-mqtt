@@ -8,3 +8,6 @@ update add https://raw.githubusercontent.com/oskarn97/fhem-siedle-mqtt/master/co
 update check siedle-mqtt
 update all siedle-mqtt
 ```
+
+### FHEM Definition
+```define Siedle SiedleMQTT```
