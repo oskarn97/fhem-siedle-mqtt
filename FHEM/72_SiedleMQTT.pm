@@ -19,7 +19,7 @@ sub SiedleMQTT_Initialize($) {
     $hash->{SetFn} = "SiedleMQTT::DEVICE::Set";
     #$hash->{GetFn} = "SiedleMQTT::DEVICE::Get";
     $hash->{AttrFn} = "SiedleMQTT::DEVICE::Attr";
-    $hash->{AttrList} = "IODev qos retain cmnds subscribeReading_ " . $main::readingFnAttributes;
+    $hash->{AttrList} = "IODev qos retain cmnds " . $main::readingFnAttributes;
     $hash->{OnMessageFn} = "SiedleMQTT::DEVICE::onmessage";
 
     main::LoadModule("MQTT");
@@ -41,6 +41,7 @@ use JSON;
 BEGIN {
     MQTT->import(qw(:all));
     GP_Import(qw(
+        CommandSave
         CommandDeleteReading
         CommandAttr
         readingsSingleUpdate
@@ -95,6 +96,7 @@ sub Undefine($$) {
     my ($hash, $name) = @_;
 
     client_unsubscribe_topic($hash, 'siedle/#');
+    RemoveInternalTimer($hash);
 
     return MQTT::Client_Undefine($hash);
 }
@@ -117,8 +119,17 @@ sub Set($$$@) {
     }
 
     if($command eq 'save') {
-        my ($cmnd_name) = @_;
-        return 'wrong syntax: set <name> save <command name>' if(!defined $cmnd_name);
+        my $value = formatCommand($values[1]) if(scalar @values == 2);
+        $value = ReadingsVal($name, 'cmnd_value', undef) if(!defined $value);
+        if(defined $value && !defined getCommand($hash, $value)) {
+            my $cmnds = AttrVal($name, 'cmnds', '');
+            $cmnds .= " " if(length $cmnds > 0);
+            $cmnds .= $values[0] . ':' . $value;
+            CommandAttr(undef, $name . ' cmnds ' . $cmnds);
+            CommandSave(undef, undef);
+            return undef;
+        }
+        return 'wrong syntax: set <name> save <command name>  [ <command> ]' if(scalar @values == 0);
     }
 
     my $exec = undef;
@@ -129,7 +140,7 @@ sub Set($$$@) {
     my $values = @values;
 
     my @infos = getCommand($hash, $command);
-    if(defined @infos && scalar @infos == 2) {
+    if(@infos && scalar @infos == 2) {
         $exec = formatCommand($infos[1]);
     }
 
@@ -137,7 +148,7 @@ sub Set($$$@) {
 
     if(defined $exec) {
         readingsBeginUpdate($hash);
-        readingsBulkUpdate($hash, 'exec', defined @infos ? $infos[0] : 'unknown');
+        readingsBulkUpdate($hash, 'exec', @infos ? $infos[0] : 'unknown');
         readingsBulkUpdate($hash, 'exec_value', $exec);
         readingsEndUpdate($hash, 1);
     	send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $exec, qos => $qos, retain => $retain);
@@ -186,17 +197,24 @@ sub onmessage($$$) {
         readingsBeginUpdate($hash);
         if($path eq 'cmnd') {
             my @infos = getCommand($hash, $message);
-            readingsBulkUpdate($hash, 'cmnd', defined @infos ? $infos[0] : "unknown");
+            readingsBulkUpdate($hash, 'cmnd', @infos ? $infos[0] : "unknown");
             readingsBulkUpdate($hash, 'cmnd_value', $message);
         } else {
+            if($path eq 'state' && $message eq 'online') {
+                main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
+                $hash->{lastHeartbeat} = time();
+            }
             readingsBulkUpdate($hash, $path, $message);
         }
     	
         readingsEndUpdate($hash, 1);
-    } else {
-      # Forward to "normal" logic
-        MQTT::DEVICE::onmessage($hash, $topic, $message);
     }
+}
+
+sub connectionTimeout {
+    my ($hash) = @_;
+    return if(time() - $hash->{lastHeartbeat} < 70);
+    readingsSingleUpdate($hash->{NAME}, 'state', 'offline', 1);
 }
 
 1;
