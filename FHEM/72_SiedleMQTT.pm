@@ -70,6 +70,8 @@ sub Define() {
         SubscribeReadings($hash);
     }
 
+    main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1) if($main::init_done);
+
     return undef;
 };
 
@@ -199,11 +201,11 @@ sub onmessage($$$) {
             my @infos = getCommand($hash, $message);
             readingsBulkUpdate($hash, 'cmnd', @infos ? $infos[0] : "unknown");
             readingsBulkUpdate($hash, 'cmnd_value', $message);
+        } if($path eq 'state' && $message eq 'online') {
+            main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
+            $hash->{lastHeartbeat} = time();
+            readingsBulkUpdate($hash, $path, $message) if(ReadingsVal($hash->{NAME}, 'state', '') ne 'online');
         } else {
-            if($path eq 'state' && $message eq 'online') {
-                main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
-                $hash->{lastHeartbeat} = time();
-            }
             readingsBulkUpdate($hash, $path, $message);
         }
     	
