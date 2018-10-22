@@ -150,7 +150,7 @@ sub Set($$$@) {
 
     if(defined $exec) {
         readingsBeginUpdate($hash);
-        readingsBulkUpdate($hash, 'exec', @infos ? $infos[0] : 'unknown');
+        readingsBulkUpdate($hash, 'exec', defined $infos[0] ? $infos[0] : 'unknown');
         readingsBulkUpdate($hash, 'exec_value', $exec);
         readingsEndUpdate($hash, 1);
     	send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $exec, qos => $qos, retain => $retain);
@@ -199,7 +199,7 @@ sub onmessage($$$) {
         readingsBeginUpdate($hash);
         if($path eq 'cmnd') {
             my @infos = getCommand($hash, $message);
-            readingsBulkUpdate($hash, 'cmnd', @infos ? $infos[0] : "unknown");
+            readingsBulkUpdate($hash, 'cmnd', defined $infos[0] ? $infos[0] : "unknown");
             readingsBulkUpdate($hash, 'cmnd_value', $message);
         } elsif($path eq 'state' && $message eq 'online') {
             main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
