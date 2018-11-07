@@ -107,12 +107,13 @@ sub Set($$$@) {
     my ($hash, $name, $command, @values) = @_;
 
     if ($command eq '?') {
-    	my $cmdList = "save ";
+    	my $cmdList = "save open:noArg light:noArg ";
 	    
         if(defined $main::attr{$name}{cmnds}) {
         	my @cmnds = split ' ', $main::attr{$name}{cmnds};
         	foreach(@cmnds) {
         		my @parts = split ':', $_;
+                next if($parts[0] eq 'open' || $parts[0] eq 'light');
         		$cmdList .= " ". $parts[0] . ":noArg";
         	}
         }
@@ -122,7 +123,7 @@ sub Set($$$@) {
 
     if($command eq 'save') {
         my $value = formatCommand($values[1]) if(scalar @values == 2);
-        $value = ReadingsVal($name, 'cmnd_value', undef) if(!defined $value);
+        $value = ReadingsVal($name, 'cmnd_raw', undef) if(!defined $value);
         if(defined $value && !defined getCommand($hash, $value)) {
             my $cmnds = AttrVal($name, 'cmnds', '');
             $cmnds .= " " if(length $cmnds > 0);
@@ -149,11 +150,9 @@ sub Set($$$@) {
     $exec = formatCommand($command) if(!defined $exec);
 
     if(defined $exec) {
-        readingsBeginUpdate($hash);
-        readingsBulkUpdate($hash, 'exec', defined $infos[0] ? $infos[0] : 'unknown');
-        readingsBulkUpdate($hash, 'exec_value', $exec);
-        readingsEndUpdate($hash, 1);
-    	send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $exec, qos => $qos, retain => $retain);
+    	send_publish($hash->{IODev}, topic => 'siedle/cmnd_raw/exec', message => $exec, qos => $qos, retain => $retain);
+    } else {
+        send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $command, qos => $qos, retain => $retain);
     }
 }
 
@@ -197,10 +196,12 @@ sub onmessage($$$) {
 
     if(scalar @parts == 2) {
         readingsBeginUpdate($hash);
-        if($path eq 'cmnd') {
-            my @infos = getCommand($hash, $message);
-            readingsBulkUpdate($hash, 'cmnd', defined $infos[0] ? $infos[0] : "unknown");
-            readingsBulkUpdate($hash, 'cmnd_value', $message);
+        if($path eq 'datagram') {
+            Decode($hash, $message, "cmnd_");
+            my $json = eval { JSON->new->utf8(0)->decode($message) };
+
+            my @infos = getCommand($hash, $json->{raw});
+            readingsBulkUpdate($hash, 'cmnd', defined $infos[0] ? $infos[0] : $json->{spelling});
         } elsif($path eq 'state' && $message eq 'online') {
             main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
             $hash->{lastHeartbeat} = time();
@@ -211,12 +212,71 @@ sub onmessage($$$) {
     	
         readingsEndUpdate($hash, 1);
     }
+
+    if(scalar @parts == 3) {
+        readingsBeginUpdate($hash);
+        if($parts[-2] eq 'result' && $path eq 'datagram') {
+            Decode($hash, $message, "exec_");
+            my $json = eval { JSON->new->utf8(0)->decode($message) };
+
+            my @infos = getCommand($hash, $json->{raw});
+            readingsBulkUpdate($hash, 'exec', defined $infos[0] ? $infos[0] : $json->{spelling});
+        } 
+        readingsEndUpdate($hash, 1);
+    }
 }
 
 sub connectionTimeout {
     my ($hash) = @_;
     return if(time() - $hash->{lastHeartbeat} < 70);
     readingsSingleUpdate($hash, 'state', 'offline', 1);
+}
+
+sub Decode {
+    my ($hash, $value, $prefix) = @_;
+    my $h;
+
+    eval {
+        $h = JSON::decode_json($value);
+        1;
+    };
+
+    if ($@) {
+        Log3($hash->{NAME}, 2, "bad JSON: $value - $@");
+        return undef;
+    }
+
+    Expand($hash, $h, $prefix);
+
+    return undef;
+}
+
+sub Expand {
+    my ($hash, $ref, $prefix, $suffix) = @_;
+
+    $prefix = "" if (!$prefix);
+    $suffix = "" if (!$suffix);
+    $suffix = "-$suffix" if ($suffix);
+
+    if (ref($ref) eq "ARRAY") {
+        while (my ($key, $value) = each @{$ref}) {
+            SiedleMQTT::DEVICE::Expand($hash, $value, $prefix . sprintf("%02i", $key + 1) . "-", "");
+        }
+    } elsif (ref($ref) eq "HASH") {
+        while (my ($key, $value) = each %{$ref}) {
+            if (ref($value) && !(ref($value) =~ m/Boolean/)) {
+                SiedleMQTT::DEVICE::Expand($hash, $value, $prefix . $key . $suffix . "-", "");
+            } else {
+                # replace illegal characters in reading names
+                (my $reading = $prefix . $key . $suffix) =~ s/[^A-Za-z\d_\.\-\/]/_/g;
+                if(ref($value) =~ m/Boolean/) {
+                    $value = $value ? "true" : "false";
+                }
+
+                readingsBulkUpdate($hash, lc($reading), $value);
+            }
+        }
+    }
 }
 
 1;
