@@ -118,7 +118,7 @@ sub Set($$$@) {
 
     my $retain = $hash->{".retain"}->{'*'};
     my $qos = $hash->{".qos"}->{'*'};
-    send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $command, qos => $qos, retain => $retain);
+    send_publish($hash->{IODev}, topic => 'siedle/exec', message => $command, qos => $qos, retain => $retain);
 }
 
 sub Get($$$@) {
@@ -138,17 +138,11 @@ sub onmessage($$$) {
 
     if(scalar @parts == 2) {
         readingsBeginUpdate($hash);
-        if($path eq 'datagram') {
-            Decode($hash, $message, "cmnd_");
-            my $json = eval { JSON->new->utf8(0)->decode($message) };
-
-            my $spelling = $json->{spelling};
-            readingsBulkUpdate($hash, 'cmnd', $spelling);
-        } elsif($path eq 'state' && $message eq 'online') {
+        if($path eq 'state' && $message eq 'online') {
             main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
             $hash->{lastHeartbeat} = time();
             readingsBulkUpdate($hash, $path, $message) if(ReadingsVal($hash->{NAME}, 'state', '') ne 'online');
-        } elsif($path eq 'cmnd') {
+        } elsif($path eq 'cmnd' || $path eq 'exec') {
             #do nothing, we use the datagram
         } else {
             readingsBulkUpdate($hash, $path, $message);
@@ -159,11 +153,14 @@ sub onmessage($$$) {
 
     if(scalar @parts == 3) {
         readingsBeginUpdate($hash);
-        if($parts[-2] eq 'result' && $path eq 'datagram') {
-            Decode($hash, $message, "exec_");
-            my $json = eval { JSON->new->utf8(0)->decode($message) };
-            readingsBulkUpdate($hash, 'exec', $json->{spelling});
-        } 
+        if($path eq 'datagram') {
+            if($parts[-2] eq 'result' || $parts[-2] eq 'cmnd') {
+                my $key = $parts[-2] eq 'result' ? 'exec' : $parts[-2];
+                Decode($hash, $message,  $key . "_");
+                my $json = eval { JSON->new->utf8(0)->decode($message) };
+                readingsBulkUpdate($hash, $key, $json->{spelling});
+            } 
+        }
         readingsEndUpdate($hash, 1);
     }
 }
