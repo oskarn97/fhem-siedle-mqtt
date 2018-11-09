@@ -19,7 +19,7 @@ sub SiedleMQTT_Initialize($) {
     $hash->{SetFn} = "SiedleMQTT::DEVICE::Set";
     #$hash->{GetFn} = "SiedleMQTT::DEVICE::Get";
     $hash->{AttrFn} = "SiedleMQTT::DEVICE::Attr";
-    $hash->{AttrList} = "IODev qos retain cmnds " . $main::readingFnAttributes;
+    $hash->{AttrList} = "IODev qos retain " . $main::readingFnAttributes;
     $hash->{OnMessageFn} = "SiedleMQTT::DEVICE::onmessage";
 
     main::LoadModule("MQTT");
@@ -107,76 +107,18 @@ sub Set($$$@) {
     my ($hash, $name, $command, @values) = @_;
 
     if ($command eq '?') {
-    	my $cmdList = "save open:noArg light:noArg ";
-	    
-        if(defined $main::attr{$name}{cmnds}) {
-        	my @cmnds = split ' ', $main::attr{$name}{cmnds};
-        	foreach(@cmnds) {
-        		my @parts = split ':', $_;
-                next if($parts[0] eq 'open' || $parts[0] eq 'light');
-        		$cmdList .= " ". $parts[0] . ":noArg";
-        	}
-        }
-
+    	my $cmdList = "open:noArg light:noArg ring ";
         return "Unknown argument " . $command . ", choose one of ". $cmdList;
     }
 
-    if($command eq 'save') {
-        my $value = formatCommand($values[1]) if(scalar @values == 2);
-        $value = ReadingsVal($name, 'cmnd_raw', undef) if(!defined $value);
-        if(defined $value && !defined getCommand($hash, $value)) {
-            my $cmnds = AttrVal($name, 'cmnds', '');
-            $cmnds .= " " if(length $cmnds > 0);
-            $cmnds .= $values[0] . ':' . $value;
-            CommandAttr(undef, $name . ' cmnds ' . $cmnds);
-            CommandSave(undef, undef);
-            return undef;
-        }
+    if($command eq 'ring') {
         return 'wrong syntax: set <name> save <command name>  [ <command> ]' if(scalar @values == 0);
+        $command .= '_' . $values[0];
     }
-
-    my $exec = undef;
 
     my $retain = $hash->{".retain"}->{'*'};
     my $qos = $hash->{".qos"}->{'*'};
-    my $value = join (" ", @values);
-    my $values = @values;
-
-    my @infos = getCommand($hash, $command);
-    if(@infos && scalar @infos == 2) {
-        $exec = formatCommand($infos[1]);
-    }
-
-    $exec = formatCommand($command) if(!defined $exec);
-
-    if(defined $exec) {
-    	send_publish($hash->{IODev}, topic => 'siedle/cmnd_raw/exec', message => $exec, qos => $qos, retain => $retain);
-    } else {
-        send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $command, qos => $qos, retain => $retain);
-    }
-}
-
-sub getCommand($$) {
-    my ($hash, $id) = @_;
-    my $name = $hash->{NAME};
-    if(defined $main::attr{$name}{cmnds}) {
-        my @cmnds = split ' ', $main::attr{$name}{cmnds};
-        foreach(@cmnds) {
-            my @parts = split ':', $_;
-            if($parts[0] eq $id || (scalar @parts == 2 && $parts[1] eq $id)) {
-                return @parts;
-            }
-        }
-    }
-
-    return undef;
-}
-
-sub formatCommand($) {
-    my ($cmnd) = @_;
-    $cmnd = uc $cmnd;
-    $cmnd =~ /(0X)?([0-9A-F]{8})/;
-    return $2;
+    send_publish($hash->{IODev}, topic => 'siedle/cmnd/exec', message => $command, qos => $qos, retain => $retain);
 }
 
 sub Get($$$@) {
@@ -200,12 +142,14 @@ sub onmessage($$$) {
             Decode($hash, $message, "cmnd_");
             my $json = eval { JSON->new->utf8(0)->decode($message) };
 
-            my @infos = getCommand($hash, $json->{raw});
-            readingsBulkUpdate($hash, 'cmnd', defined $infos[0] ? $infos[0] : $json->{spelling});
+            my $spelling = $json->{spelling};
+            readingsBulkUpdate($hash, 'cmnd', $spelling);
         } elsif($path eq 'state' && $message eq 'online') {
             main::InternalTimer(main::gettimeofday()+80, "SiedleMQTT::DEVICE::connectionTimeout", $hash, 1);
             $hash->{lastHeartbeat} = time();
             readingsBulkUpdate($hash, $path, $message) if(ReadingsVal($hash->{NAME}, 'state', '') ne 'online');
+        } elsif($path eq 'cmnd') {
+            #do nothing, we use the datagram
         } else {
             readingsBulkUpdate($hash, $path, $message);
         }
@@ -218,9 +162,7 @@ sub onmessage($$$) {
         if($parts[-2] eq 'result' && $path eq 'datagram') {
             Decode($hash, $message, "exec_");
             my $json = eval { JSON->new->utf8(0)->decode($message) };
-
-            my @infos = getCommand($hash, $json->{raw});
-            readingsBulkUpdate($hash, 'exec', defined $infos[0] ? $infos[0] : $json->{spelling});
+            readingsBulkUpdate($hash, 'exec', $json->{spelling});
         } 
         readingsEndUpdate($hash, 1);
     }
