@@ -112,7 +112,7 @@ sub Set($$$@) {
     }
 
     if($command eq 'ring') {
-        return 'wrong syntax: set <name> save <command name>  [ <command> ]' if(scalar @values == 0);
+        return 'wrong syntax: set <name> ring <phoneAddress>' if(scalar @values != 1);
         $command .= '_' . $values[0];
     }
 
