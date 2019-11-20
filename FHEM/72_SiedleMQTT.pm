@@ -105,9 +105,11 @@ sub Undefine($$) {
 
 sub Set($$$@) {
     my ($hash, $name, $command, @values) = @_;
+    my $retain = $hash->{".retain"}->{'*'};
+    my $qos = $hash->{".qos"}->{'*'};
 
     if ($command eq '?') {
-    	my $cmdList = "open:noArg light:noArg ring ";
+    	my $cmdList = "open:noArg light:noArg ring playAudio ";
         return "Unknown argument " . $command . ", choose one of ". $cmdList;
     }
 
@@ -116,8 +118,12 @@ sub Set($$$@) {
         $command .= '_' . $values[0];
     }
 
-    my $retain = $hash->{".retain"}->{'*'};
-    my $qos = $hash->{".qos"}->{'*'};
+    if($command eq 'playAudio') {
+        return 'wrong syntax: set <name> playAudio <fileName>' if(scalar @values != 1);
+        send_publish($hash->{IODev}, topic => 'siedle/playAudio', message => $values[0], qos => $qos, retain => $retain);
+        return;
+    }
+    
     send_publish($hash->{IODev}, topic => 'siedle/exec', message => $command, qos => $qos, retain => $retain);
 }
 
